@@ -145,7 +145,7 @@ const Resource = struct {
                     content_type = "text/html";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".js")) {
-                    content_type = "text/js";
+                    content_type = "text/javascript";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".css")) {
                     content_type = "text/css";
