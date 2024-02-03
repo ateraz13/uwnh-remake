@@ -40,6 +40,16 @@ pub fn build(b: *Builder) !void {
     game.step.dependOn(&gen_step.step);
     b.installArtifact(game);
 
+    const http_server = b.addExecutable(.{
+        .name = "http_server",
+        .root_source_file = .{ .path = "http_server.zig" },
+        .target = b.standardTargetOptions(.{}),
+        // .optimize = .ReleaseSmall,
+        .optimize = .Debug,
+    });
+
+    b.installArtifact(http_server);
+
     const copy_output_to_root = b.addInstallBinFile(game.getEmittedBin(), "../../web/wasm/game.wasm");
     b.getInstallStep().dependOn(&copy_output_to_root.step);
 }
