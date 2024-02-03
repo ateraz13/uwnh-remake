@@ -42,7 +42,7 @@ pub fn build(b: *Builder) !void {
 
     const http_server = b.addExecutable(.{
         .name = "http_server",
-        .root_source_file = .{ .path = "http_server.zig" },
+        .root_source_file = .{ .path = "./scripts/http_server.zig" },
         .target = b.standardTargetOptions(.{}),
         // .optimize = .ReleaseSmall,
         .optimize = .Debug,
