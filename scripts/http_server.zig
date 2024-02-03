@@ -163,6 +163,7 @@ const Resource = struct {
                 std.debug.print("content_type: {s}\n", .{content_type});
 
                 if(std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only})) |f| {
+                    std.debug.print("file resource: {s}\n", .{absolute_path});
                     rh = ResourceHandle { .file = f };
                 } else |err| {
                     std.debug.print("File not found ({s}): {}!\n", .{ absolute_path, err });
@@ -193,6 +194,7 @@ const Resource = struct {
             }
         }
 
+        std.debug.print("Located: {s}\n", .{absolute_path});
         return Self {
             .base_path = base_path,
             .relative_path = relative_path,
@@ -332,12 +334,20 @@ pub fn main() !void {
     var base_path = std.mem.span(@as([*c]const u8, @ptrCast(cwd[0..])));
 
     while (true) {
-        var res = try server.accept(.{ .allocator = alloc });
+        var res = try server.accept(.{ .allocator = alloc, .header_strategy = .{.dynamic = 1024*10}});
         defer res.deinit();
 
         std.debug.print("Request made!\n", .{});
         while (res.reset() != .closing) {
             std.debug.print("Waiting for request...\n", .{});
+
+            // FIXME: The wait functions internatlly tries to read from a socket
+            // until it has a complete request header. Unfortunatelly it gets stuck
+            // trying to fill a buffer but the client is already waiting for response,
+            // this locks the function because its waiting for the client to finish the
+            // request but the client belives it already finished a request. This could
+            // be either due to incompatible protocol versions of HTTP between server and
+            // client or it just might be a bug in std.http which is quite possible.
             res.wait() catch |err| switch (err) {
                 error.HttpHeadersInvalid => break,
                 error.HttpHeadersExceededSizeLimit => {
