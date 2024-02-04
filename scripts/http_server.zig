@@ -396,9 +396,9 @@ pub fn main() !void {
                 }
                 var writer = res.writer();
 
-                try res.headers.append("cache-control", "no-cache");
-
-                try res.headers.append("content-type", rsrc.content_type);
+                try res.headers.append("Cache-Control", "no-cache");
+                try res.headers.append("Content-Type", rsrc.content_type);
+                try res.headers.append("Connection", "closed");
 
                 std.debug.print("Sending http header!\n", .{});
                 res.do() catch |err| {
