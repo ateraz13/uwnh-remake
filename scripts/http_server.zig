@@ -126,6 +126,7 @@ const Resource = struct {
     absolute_path: []const u8,
     path_buffer: [std.fs.MAX_PATH_BYTES]u8,
     alloc: std.mem.Allocator,
+    resource_size: ?usize,
 
     fn locate(base_path: []const u8, relative_path: []const u8) !Self {
         var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
@@ -136,6 +137,7 @@ const Resource = struct {
         var content_type: []const u8 = "application/octet-stream";
         var rh = ResourceHandle{ .static_html = "<h1>Something went wrong!</h1>" };
 
+        var resource_size : ?usize = null;
         var file = try std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only});
         const metadata = try file.metadata();
 
@@ -164,6 +166,8 @@ const Resource = struct {
 
                 if(std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only})) |f| {
                     std.debug.print("file resource: {s}\n", .{absolute_path});
+                    resource_size = metadata.size();
+                    std.debug.print("content-length: {?}\n", .{resource_size});
                     rh = ResourceHandle { .file = f };
                 } else |err| {
                     std.debug.print("File not found ({s}): {}!\n", .{ absolute_path, err });
@@ -202,6 +206,7 @@ const Resource = struct {
             .path_buffer = path_buffer,
             .alloc = alloc,
             .content_type = content_type,
+            .resource_size = resource_size,
             .handle = rh,
         };
     }
@@ -382,7 +387,13 @@ pub fn main() !void {
 
                 res.status = .ok;
                 // FIXME: transfer encoding should corespond to prefer method used by client.
-                res.transfer_encoding = .chunked;
+
+                if(rsrc.resource_size) |length| {
+                    res.transfer_encoding = .{.content_length = length};
+                }
+                else {
+                    res.transfer_encoding = .chunked;
+                }
                 var writer = res.writer();
 
                 try res.headers.append("cache-control", "no-cache");
