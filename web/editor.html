@@ -14,21 +14,88 @@
         <script type="text/javascript" src="scripts/editor.js"></script>
         <script type="text/javascript" src="scripts/dom.js"></script>
         <script type="text/javascript" src="scripts/draggable.js"></script>
+        <script type="text/javascript" src="scripts/twitch-streamerbot.js"></script>
         <link rel="stylesheet" type="text/css" href="styles/editor.css" />
+        <link rel="stylesheet" type="text/css" href="styles/juice-it-animations.css" />
     </head>
     <body>
-        <div class="editor draggable">
+        <div class="editor draggable hide">
             <div class="draggable-header draggable-handle">&nbsp;</div>
             <div class="title">Current World: 0</div>
             <div class="btn" onclick="_GAME.editor_addRowToWorld(0);">Add Row</div>
             <div class="btn" onclick="_GAME.editor_addColumnToWorld(0);">Add Column</div>
+            <div class="btn" onclick="_GAME.editor_removeRowFromWorld(0);">Remove Row</div>
+            <div class="btn" onclick="_GAME.editor_removeColumnFromWorld(0);">Remove Column</div>
+            <div class="btn" onclick="EDITOR.removeNPC();">Remove NPC</div>
+            <div class="btn" onclick="EDITOR.addNPC();">Add NPC</div>
             <div class="btn" onclick="EDITOR.addCollision();">Add Collision</div>
             <div class="btn" onclick="EDITOR.removeCollision();">Remove Collision</div>
             <div class="btn" onclick="EDITOR.memoryToBin(_GAME.editor_getWorldMemoryLocation(0), _GAME.editor_getWorldMemoryLength(0), 'world_0.bin');">Extract Data</div>
         </div>
-        <div class="editor console draggable">
+        <div class="editor console draggable hide">
             <div class="draggable-header draggable-handle">&nbsp;</div>
             <textarea id="editor_console"></textarea>
+        </div>
+        <div class="editor draggable hide twitch leaderboard">
+            <div class="draggable-header draggable-handle">&nbsp;</div>
+            <div class="title">LEADERBOARD</div>
+            <div id="leaderboard"></div>
+        </div>
+        <div class="editor draggable twitch">
+            <div class="draggable-header draggable-handle">&nbsp;</div>
+            <div class="title">CURRENT SHIPS</div>
+            <div id="ship_1">[EMPTY]</div>
+            <div id="ship_2">[EMPTY]</div>
+            <div id="ship_3">[EMPTY]</div>
+            <div id="ship_4">[EMPTY]</div>
+            <div id="ship_5">[EMPTY]</div>
+            <div><hr/></div>
+            <div class="title">COMMANDS</div>
+            <div class="twitch_chat_command">!gamecommands</div>
+            <div class="twitch_chat_command">!spawn (spawn into a ship)</div>
+            <div class="twitch_chat_command">!done (leave a ship)</div>
+            <div class="twitch_chat_command">!up [!u] (move up)</div>
+            <div class="twitch_chat_command">!down [!d] (move down)</div>
+            <div class="twitch_chat_command">!left [!l] (move left)</div>
+            <div class="twitch_chat_command">!right [!r] (move right)</div>
+            <div class="twitch_chat_command">!attack [!a] (attack)</div>
+            <div class="twitch_chat_command">To attack, stand next to your target</div>
+            <div class="twitch_chat_command">Above, below, left or right of target</div>
+            <div class="twitch_chat_command">Redeem 2k channel points for a Kraken</div>
+            <div><hr/></div>
+            <div class="twitch_chat_command">[MODS/VIPS]</div>
+            <div class="twitch_chat_command">!reset</div>
+            <div class="twitch_chat_command">!kraken</div>
+            <div><hr/></div>
+            <div class="twitch_chat_command">"H" stands for health</div>
+            <div class="twitch_chat_command">Attack an "H" to get health</div>
+            <div class="twitch_chat_command">Redeem 500 channel points to</div>
+            <div class="twitch_chat_command">be the Kraken/Ocaml boss</div>
+            <div><hr/></div>
+            <div class="title">TODO</div>
+            <div class="todo-item">- Smoother chained movements</div>
+            <div class="todo-item">- Update movement (!u8)</div>
+            <div class="todo-item">- Fix initial kraken location block</div>
+            <div class="todo-item">- Queue system for mass users</div>
+            <div class="todo-item">- Add yoshi eggs/poops (blocks/mines)</div>
+            <div class="todo-item">- Challenges</div>
+            <div class="todo-item">- Polls / betting?</div>
+            <div class="todo-item">- Emote only controls</div>
+            <div class="todo-item">- Kraken DBD mode (chases you)</div>
+            <div class="todo-item">- Sounds (like screaming)</div>
+            <div class="todo-item">- Red sea when you sink</div>
+            <div class="todo-item">- Fix death animation</div>
+            <div class="todo-item">- Random icebergs</div>
+            <div class="todo-item">- Autosail in direction (!anchor)</div>
+            <div class="todo-item">- Add more ships</div>
+            <div class="todo-item">- Teams?</div>
+            <div class="todo-item">- Ramming & Whirlpools</div>
+            <div class="todo-item">- Color code ships to users</div>
+            <div class="todo-item">- cmd/redeem show leaderboard</div>
+            <div class="todo-item">- bug - can move w/ 0 HP</div>
+            <div class="todo-item">- bug - leaderboard points</div>
+            <div class="todo-item">- bug - back from the dead</div>
+            <div class="todo-item">- redeem channel points for health</div>
         </div>
         <div id="stats"></div>
         <div id="view">

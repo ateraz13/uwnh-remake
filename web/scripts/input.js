@@ -28,24 +28,31 @@ var INPUT = {
             // Note: This has to be up top so it's captured before the other KeyD is captured for moving the player around
             if (evt.code === 'KeyD' && evt.shiftKey === true) {
                 // DELETE COLLISION BLOCK
+                EDITOR.removeCollision();
             } else if (evt.code === 'KeyA' && evt.shiftKey === true) {
                 // ADD COLLISION BLOCK
+                EDITOR.addCollision();
             } else if (evt.code === 'KeyE' && evt.shiftKey === true) {
                 // TODO: show editor UI
             } else if (evt.code === 'KeyW') {
                 // UP
-                _GAME.inputs_inputUp();
+                _GAME.inputs_inputUp(0);
             } else if (evt.code === 'KeyS') {
                 // DOWN
-                _GAME.inputs_inputDown();
+                _GAME.inputs_inputDown(0);
             } else if (evt.code === 'KeyA') {
                 // LEFT
-                _GAME.inputs_inputLeft();
+                _GAME.inputs_inputLeft(0);
             } else if (evt.code === 'KeyD') {
                 // RIGHT
-                _GAME.inputs_inputRight();
+                _GAME.inputs_inputRight(0);
             } else if (evt.code === 'Space') {
                 // ATTACK
+                _GAME.game_entityAttack(0, 8);
+                    if (_GAME.game_entityGetHealth((9-1)) <= 0) {
+                        DISABLE_KRAKEN();
+                    }
+
             } else if (evt.code === 'KeyQ') {
                 // FULL SCREEN MENU
             } else if (evt.code === 'ArrowUp') {
