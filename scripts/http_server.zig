@@ -149,6 +149,9 @@ const Resource = struct {
                 else if(std.mem.endsWith(u8, relative_path, ".js")) {
                     content_type = "text/javascript";
                 }
+                else if(std.mem.endsWith(u8, relative_path, ".wasm")) {
+                    content_type = "application/wasm";
+                }
                 else if(std.mem.endsWith(u8, relative_path, ".css")) {
                     content_type = "text/css";
                 }
@@ -219,27 +222,29 @@ const Resource = struct {
 
                 var bytes_read: usize = 0;
                 var bytes_writen: usize = 0;
+                var total_bytes_writen: usize = 0;
 
                 // Read file from file system and write to response.
                 while(true) {
                     bytes_read += try f.read(&file_buffer);
-                    std.debug.print("bytes read: {}\n", .{bytes_read});
                     while (true) {
                         bytes_writen += writer.write(file_buffer[bytes_writen..bytes_read]) catch |err| {
-                            std.debug.print("Failed writing to socket during file tranfer!: {}", .{err});
+                            std.debug.print("Failed writing to socket during file tranfer!\nError: {}", .{err});
                             return err;
                         };
-                        std.debug.print("Bytes written: {}\n", .{bytes_writen});
                         if(bytes_writen >= bytes_read) {
                             break;
                         }
                     }
+                    total_bytes_writen += bytes_writen;
                     if(bytes_read < file_buffer.len) {
                         break;
                     }
                     bytes_read = 0;
                     bytes_writen = 0;
                 }
+
+                std.debug.print("Total bytes writen: {}\n", .{total_bytes_writen});
             },
             .directory => |_| {
                 try html_list_dir(writer, self);
@@ -339,10 +344,16 @@ pub fn main() !void {
     var base_path = std.mem.span(@as([*c]const u8, @ptrCast(cwd[0..])));
 
     while (true) {
-        var res = try server.accept(.{ .allocator = alloc, .header_strategy = .{.dynamic = 1024*10}});
+        var res = try server.accept(.{
+            .allocator = alloc,
+            .header_strategy = .{.dynamic = 1024*10}
+        });
         defer res.deinit();
 
         std.debug.print("Request made!\n", .{});
+
+        var request_count:u32 = 0;
+
         while (res.reset() != .closing) {
             std.debug.print("Waiting for request...\n", .{});
 
@@ -353,6 +364,10 @@ pub fn main() !void {
             // request but the client belives it already finished a request. This could
             // be either due to incompatible protocol versions of HTTP between server and
             // client or it just might be a bug in std.http which is quite possible.
+            //
+            // NOTE: This has been temporarily fixed by providing the client with "connection: close"
+            // response header. It forces the client to reinstantiate a new connection to the server
+            // after every response.
             res.wait() catch |err| switch (err) {
                 error.HttpHeadersInvalid => break,
                 error.HttpHeadersExceededSizeLimit => {
@@ -366,7 +381,11 @@ pub fn main() !void {
                     break;
                 },
             };
-            std.debug.print("Request receive!\n", .{});
+
+            request_count += 1;
+
+            std.debug.print("Request count: {}\n", .{request_count});
+            std.debug.print("Request received!\n", .{});
 
             const request = res.request;
 
@@ -379,10 +398,6 @@ pub fn main() !void {
 
             // FIXME: Make sure file system resources are locked while they
             // are being retrived to avoid race conditions.
-            // FIXME/TODO: Maybe its possible to locate resources, retrieve a
-            // response writer and move on to another resource request.
-            // The writing could happen in an asynchronous context, I don't know
-            // if its possible with std.http but I think it would help performance.
             if(Resource.locate(base_path, request.target)) |rsrc| {
 
                 res.status = .ok;
@@ -396,9 +411,9 @@ pub fn main() !void {
                 }
                 var writer = res.writer();
 
-                try res.headers.append("Cache-Control", "no-cache");
-                try res.headers.append("Content-Type", rsrc.content_type);
-                try res.headers.append("Connection", "closed");
+                try res.headers.append("cache-control", "no-cache");
+                try res.headers.append("content-type", rsrc.content_type);
+                try res.headers.append("connection", "close");
 
                 std.debug.print("Sending http header!\n", .{});
                 res.do() catch |err| {
@@ -412,22 +427,19 @@ pub fn main() !void {
                 };
 
                 std.debug.print("Sent file: {s}\n", .{request.target});
-                res.finish() catch |err| {
-                    std.debug.print("Failed to finishing a response: {}\n", .{err});
-                    break;
-                };
-                std.debug.print("Finished a request.\n", .{});
             }
             else |_| {
                 std.debug.print("File not found: {s}", .{request.target});
                 res.status = .not_found;
                 res.transfer_encoding = .chunked;
                 try res.do();
-                res.finish() catch |err| {
-                    std.debug.print("Failed to finishing a response: {}\n", .{err});
-                    break;
-                };
             }
+
+            res.finish() catch |err| {
+                std.debug.print("Failed to finishing a response: {}\n", .{err});
+                break;
+            };
+            std.debug.print("Finished a request.\n", .{});
 
         }
     }
