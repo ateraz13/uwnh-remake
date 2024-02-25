@@ -129,12 +129,15 @@ const Resource = struct {
     resource_size: ?usize,
 
     fn locate(base_path: []const u8, relative_path: []const u8) !Self {
+
         var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         @memset(path_buffer[0..], 0);
         var fb = std.heap.FixedBufferAllocator.init(&path_buffer);
         const alloc = fb.allocator();
+
         var absolute_path = try std.fs.path.join(alloc, &[_][]const u8{base_path, relative_path});
         var content_type: []const u8 = "application/octet-stream";
+
         var rh = ResourceHandle{ .static_html = "<h1>Something went wrong!</h1>" };
 
         var resource_size : ?usize = null;
@@ -158,11 +161,23 @@ const Resource = struct {
                 else if(std.mem.endsWith(u8, relative_path, ".png")) {
                     content_type = "image/png";
                 }
+                else if(std.mem.endsWith(u8, relative_path, ".gif")) {
+                    content_type = "image/gif";
+                }
                 else if(std.mem.endsWith(u8, relative_path, ".svg")) {
                     content_type = "image/svg+xml";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".jpg") or std.mem.endsWith(u8, relative_path, ".jpeg") ) {
                     content_type = "image/jpeg";
+                }
+                else if(std.mem.endsWith(u8, relative_path, ".mpeg")) {
+                    content_type = "video/mpeg";
+                }
+                else if(std.mem.endsWith(u8, relative_path, ".mp4")) {
+                    content_type = "video/mp4";
+                }
+                else if(std.mem.endsWith(u8, relative_path, ".webm")) {
+                    content_type = "video/webm";
                 }
 
                 std.debug.print("content_type: {s}\n", .{content_type});
@@ -270,11 +285,14 @@ const Config = struct {
     bind_addr: std.net.Address,
 };
 
-fn parse_args() Config {
-    var args = std.process.args();
+fn print_help_message(exe_name: [:0]const u8) void {
+    std.debug.print("command:\n\t{s} [options]\noptions:\n", .{exe_name});
+    std.debug.print("\t--bind | -b <ip_addr> <port> : Bind connection to ip_addr and port\n", .{});
+    std.debug.print("\t--help | -h                  : Print this help message.", .{});
+}
 
-    // Executable name
-    _ = args.next();
+fn parse_args() error{EarlyExit}!Config {
+    var args = std.process.args();
 
     var addr = std.net.Address {
         .in = std.net.Ip4Address.init(
@@ -283,9 +301,16 @@ fn parse_args() Config {
         )
     };
 
+    const default_config = Config {
+        .bind_addr = addr
+    };
+
+    // Executable name
+    const exe_name = args.next() orelse return default_config;
+
     while(args.next()) |arg| {
 
-        if(std.mem.eql(u8, arg, "--bind")) {
+        if(std.mem.eql(u8, arg, "--bind") or std.mem.eql(u8, arg, "-B")) {
 
             if (args.next()) |ip_str| {
                 addr = std.net.Address.resolveIp(ip_str, DEFAULT_BIND_PORT) catch default_ip: {
@@ -310,6 +335,14 @@ fn parse_args() Config {
                 }
             }
         }
+        else if(std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            print_help_message(exe_name[0..]);
+            return error.EarlyExit;
+        }
+        else {
+            print_help_message(exe_name);
+            return error.EarlyExit;
+        }
     }
 
     return Config {
@@ -322,7 +355,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
     const alloc = gpa.allocator();
 
-    var config = parse_args();
+    var config = parse_args() catch return;
     const bind_addr = config.bind_addr;
 
     defer {
@@ -344,15 +377,13 @@ pub fn main() !void {
     var base_path = std.mem.span(@as([*c]const u8, @ptrCast(cwd[0..])));
 
     while (true) {
+
         var res = try server.accept(.{
             .allocator = alloc,
             .header_strategy = .{.dynamic = 1024*10}
         });
+
         defer res.deinit();
-
-        std.debug.print("Request made!\n", .{});
-
-        var request_count:u32 = 0;
 
         while (res.reset() != .closing) {
             std.debug.print("Waiting for request...\n", .{});
@@ -368,6 +399,16 @@ pub fn main() !void {
             // NOTE: This has been temporarily fixed by providing the client with "connection: close"
             // response header. It forces the client to reinstantiate a new connection to the server
             // after every response.
+            //
+            // NOTE: The client makes several requests at the same time, the server then parses each
+            // request in sequence, the server moves on to another request when the res.reset() function
+            // is called. The server seems to skip over some requests and when it tries to read more
+            // requests gets stuck because the client has already sent all its request but the
+            // server keeps reading.
+            //
+            // I have a few hypothesis as to why this might be happening, I will verify what is actually
+            // going on. However the server works and it is usuable, so this might not be really neccessary
+            // but it bothers me.
             res.wait() catch |err| switch (err) {
                 error.HttpHeadersInvalid => break,
                 error.HttpHeadersExceededSizeLimit => {
@@ -382,17 +423,14 @@ pub fn main() !void {
                 },
             };
 
-            request_count += 1;
-
-            std.debug.print("Request count: {}\n", .{request_count});
-            std.debug.print("Request received!\n", .{});
-
             const request = res.request;
 
-            std.debug.print("target: {s}\n", .{request.target});
+            std.debug.print("target request: {s}\n", .{request.target});
 
             if(request.method != .GET) {
                 std.debug.print("Unsupported request method!\n", .{});
+                res.status = .not_implemented;
+                res.finish() catch break;
                 break;
             }
 
