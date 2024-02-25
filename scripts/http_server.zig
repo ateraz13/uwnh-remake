@@ -407,7 +407,7 @@ pub fn main() !void {
             // server keeps reading.
             //
             // I have a few hypothesis as to why this might be happening, I will verify what is actually
-            // going on. However the server works and it is usuable, so this might not be really neccessary
+            // going on. However the server works and it is usable, so this might not be really neccessary
             // but it bothers me.
             res.wait() catch |err| switch (err) {
                 error.HttpHeadersInvalid => break,
