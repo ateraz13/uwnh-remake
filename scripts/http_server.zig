@@ -313,9 +313,9 @@ const Config = struct {
 
 fn print_help_message(exe_name: [:0]const u8) void {
     std.debug.print("command:\n\t{s} [options]\noptions:\n", .{exe_name});
-    std.debug.print("\t--bind | -b <ip_addr> <port> : Bind connection to ip_addr and port\n", .{});
-    std.debug.print("\t--root-dir | -d <dir>        : Set the root directory from which files are served\n", .{});
-    std.debug.print("\t--help | -h                  : Print this help message.", .{});
+    std.debug.print("\t--bind     | -b <ip_addr> <port> : Bind connection to ip_addr and port\n", .{});
+    std.debug.print("\t--root-dir | -d <dir>            : Set the root directory from which files are served\n", .{});
+    std.debug.print("\t--help     | -h                  : Print this help message.", .{});
 }
 
 fn parse_args(config: *Config) !void {
