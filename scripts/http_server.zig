@@ -50,8 +50,8 @@ const Hyperlinks = struct {
         @memset(self.buffer[0..], 0);
 
         if(try self.dir_iter.next()) |entry| {
-            const label = try std.fs.path.joinZ(self.alloc, &[_][]const u8 { entry.name });
-            const href = try std.fs.path.joinZ(self.alloc, &[_][]const u8 { self.relative_path, entry.name });
+            const label = try std.fs.path.join(self.alloc, &[_][]const u8 { entry.name });
+            const href = try std.fs.path.join(self.alloc, &[_][]const u8 { self.relative_path, entry.name });
             return Hyperlink { .href = href, .label = label };
         }
 
@@ -132,13 +132,16 @@ const Resource = struct {
 
         var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         @memset(path_buffer[0..], 0);
-        var fb = std.heap.FixedBufferAllocator.init(&path_buffer);
+        var fb = std.heap.FixedBufferAllocator.init(path_buffer[0..]);
         const alloc = fb.allocator();
+        std.debug.print("base_path: {s}\n", .{base_path});
 
         var absolute_path = try std.fs.path.join(alloc, &[_][]const u8{base_path, relative_path});
         var content_type: []const u8 = "application/octet-stream";
 
         var rh = ResourceHandle{ .static_html = "<h1>Something went wrong!</h1>" };
+        std.debug.print("relative_path: {s}\n", .{ relative_path });
+        std.debug.print("absolute_path: {s}\n", .{ absolute_path });
 
         var resource_size : ?usize = null;
         var file = try std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only});
@@ -283,37 +286,59 @@ const Resource = struct {
 
 const Config = struct {
     bind_addr: std.net.Address,
+    root_dir: []const u8,
+    path_buffer: [std.fs.MAX_PATH_BYTES] u8,
+
+    fn default() Config {
+
+        var addr = std.net.Address {
+            .in = std.net.Ip4Address.init(
+                DEFAULT_BIND_ADDRESS,
+                DEFAULT_BIND_PORT
+            )
+        };
+
+        var config = Config {
+            .bind_addr = addr,
+            .root_dir = "",
+            .path_buffer = undefined,
+        };
+
+        @memset(config.path_buffer[0..], 0);
+        config.root_dir = &config.path_buffer;
+
+        return config;
+    }
 };
 
 fn print_help_message(exe_name: [:0]const u8) void {
     std.debug.print("command:\n\t{s} [options]\noptions:\n", .{exe_name});
     std.debug.print("\t--bind | -b <ip_addr> <port> : Bind connection to ip_addr and port\n", .{});
+    std.debug.print("\t--root-dir | -d <dir>        : Set the root directory from which files are served\n", .{});
     std.debug.print("\t--help | -h                  : Print this help message.", .{});
 }
 
-fn parse_args() error{EarlyExit}!Config {
+fn parse_args(config: *Config) !void {
     var args = std.process.args();
 
-    var addr = std.net.Address {
-        .in = std.net.Ip4Address.init(
-            DEFAULT_BIND_ADDRESS,
-            DEFAULT_BIND_PORT
-        )
-    };
+    var cwd_buffer : [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    @memset(cwd_buffer[0..], 0);
+    var cwd_path = std.os.getcwd(&cwd_buffer) catch "";
 
-    const default_config = Config {
-        .bind_addr = addr
-    };
+    var fb = std.heap.FixedBufferAllocator.init(&config.path_buffer);
+    const pa = fb.allocator();
+
+    config.root_dir = try std.fs.path.join(pa, &[_][]const u8{cwd_path});
 
     // Executable name
-    const exe_name = args.next() orelse return default_config;
+    const exe_name = args.next() orelse return;
 
     while(args.next()) |arg| {
 
         if(std.mem.eql(u8, arg, "--bind") or std.mem.eql(u8, arg, "-B")) {
 
             if (args.next()) |ip_str| {
-                addr = std.net.Address.resolveIp(ip_str, DEFAULT_BIND_PORT) catch default_ip: {
+                config.bind_addr = std.net.Address.resolveIp(ip_str, DEFAULT_BIND_PORT) catch default_ip: {
                     std.debug.print("Invalid ip address, using default binding {s}:{}\n", .{DEFAULT_BIND_ADDRESS, DEFAULT_BIND_PORT});
                     break :default_ip std.net.Address {
                         .in = std.net.Ip4Address.init(
@@ -331,7 +356,7 @@ fn parse_args() error{EarlyExit}!Config {
                         break :default_port DEFAULT_BIND_PORT;
                     };
 
-                    addr.setPort(port);
+                    config.bind_addr.setPort(port);
                 }
             }
         }
@@ -339,15 +364,27 @@ fn parse_args() error{EarlyExit}!Config {
             print_help_message(exe_name[0..]);
             return error.EarlyExit;
         }
+        else if(std.mem.eql(u8, arg, "--root-dir") or std.mem.eql(u8, arg, "-d")) {
+            if(args.next()) |dir_path| {
+
+                pa.free(config.root_dir);
+
+                if(std.fs.path.isAbsolute(dir_path)) {
+                    config.root_dir = try std.fs.path.join(pa, &[_][]const u8{ dir_path });
+                }
+                else {
+                    var dir = try std.fs.openDirAbsolute(cwd_path, .{});
+                    defer dir.close();
+
+                    config.root_dir = try dir.realpathZ(dir_path, config.path_buffer[0..]);
+                }
+            }
+        }
         else {
             print_help_message(exe_name);
             return error.EarlyExit;
         }
     }
-
-    return Config {
-        .bind_addr = addr
-    };
 }
 
 pub fn main() !void {
@@ -355,7 +392,16 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
     const alloc = gpa.allocator();
 
-    var config = parse_args() catch return;
+    var config = Config.default();
+    parse_args(&config) catch |err| {
+        if (err == error.EarlyExit) {
+            return;
+        }
+        else {
+            return err;
+        }
+    };
+
     const bind_addr = config.bind_addr;
 
     defer {
@@ -370,11 +416,7 @@ pub fn main() !void {
 
     try server.listen(bind_addr);
 
-    var cwd : [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    @memset(cwd[0..], 0);
-    _ = std.os.getcwd(&cwd) catch "";
-
-    var base_path = std.mem.span(@as([*c]const u8, @ptrCast(cwd[0..])));
+    var base_path = config.root_dir;//std.mem.span(@as([*c]const u8, @ptrCast(config.root_dir)));
 
     while (true) {
 
