@@ -116,34 +116,113 @@ const ResourceHandle = union(ResourceType) {
     static_html: []const u8,
 };
 
+const FileSystemPath = struct {
+    const Self = @This();
+    path: []const u8,
+    path_buffer: [std.fs.MAX_PATH_BYTES]u8,
+
+    fn empty() Self {
+        return Self {
+            path: "",
+            path_buffer: undefined,
+        }
+    }
+
+    fn from(self: *Self, part: []const u8) !void {
+        @memset(path_buffer, 0);
+        var fb = std.heap.FixedBufferAllocator.init(&path_buffer);
+        var pa = fb.allocator();
+
+        self.path = try std.fs.path.join(pa, [_][]const u8{part});
+    }
+
+    fn from_parts(self: *Self, comps: [][]const u8) !void {
+        @memset(path_buffer, 0);
+        var fb = std.heap.FixedBufferAllocator.init(&path_buffer);
+        var pa = fb.allocator();
+
+        self.path = try std.fs.path.join(pa, comps);
+    }
+}
+
+const ResourceFileSystemLocation = struct {
+    const Self = @This();
+    base_path: FileSystemPath,
+    relative_path: FileSystemPath,
+    absolute_path: FileSystemPath,
+
+    fn empty() Self {
+        return Self {
+            base_path = FileSystemPath.empty(),
+            relative_path = FileSystemPath.empty(),
+            absolute_path = FileSystemPath.empty(),
+            resource_size = null
+        };
+    }
+
+    fn set_base_path(self: *Self, base_path: []const u8) {
+        self.base_path.from(base_path);
+    }
+
+    fn from_relative_path(self: *self, relative_path: []const u8) {
+        self.relative_path.from(relative_path);
+        self.absolute_path.from_parts(&[_][]const u8{self.base_path.path, relative_path});
+    }
+
+    fn append_part(self: *Self, part: []const u8) {
+
+        var scratch: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        @memset(scratch, 0);
+
+        var fb = std.heap.FixedBufferAllocator.init(&scratch);
+        const pa = fb.allocator();
+
+        var tmp = std.path.join(pa, &{self.relative_path.path, part});
+        relative_path.from(tmp);
+        pa.free(tmp);
+
+        tmp = std.path.join(pa, &{self.base_path.path, self.relative_path.path});
+        absolute_path.from(tmp);
+        pa.free(tmp);
+    }
+};
+
+const ResourceLocationType = enum {
+    file_system,
+    none,
+}
+
+const ResourceLocation = union(ResourceLocationType) {
+    file_system(ResourceFileSystemLocation),
+    none(),
+}
+
 const Resource = struct {
     const Self = @This();
 
-    handle: ResourceHandle,
     content_type: []const u8,
-    base_path: []const u8,
-    relative_path: []const u8,
-    absolute_path: []const u8,
-    path_buffer: [std.fs.MAX_PATH_BYTES]u8,
+    location: ResourceLocation;
+    handle: ResourceHandle,
     alloc: std.mem.Allocator,
     resource_size: ?usize,
 
-    fn locate(base_path: []const u8, relative_path: []const u8) !Self {
+    fn empty(alloc: std.mem.Allocator) Self {
+        return Self {
+            .location = .none,
+            .handle = .{.static_html = "<h1> Empty resource, something went wrong! </h1>"},
+            .alloc = alloc,
+        };
+    }
 
-        var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        @memset(path_buffer[0..], 0);
-        var fb = std.heap.FixedBufferAllocator.init(path_buffer[0..]);
-        const alloc = fb.allocator();
-        std.debug.print("base_path: {s}\n", .{base_path});
+    fn locate(self: *Self, base_path: []const u8, relative_path: []const u8) !void {
 
-        var absolute_path = try std.fs.path.join(alloc, &[_][]const u8{base_path, relative_path});
-        var content_type: []const u8 = "application/octet-stream";
+        self.location.file_system.set_base_path(base_path);
+        self.location.file_system.from_relative_path(relative_path);
+        std.debug.print("base_path: {s}\n", .{self.location.file_syste.base_path});
+        self.content_type = "application/octet-stream";
+        self.handle = ResourceHandle{ .static_html = "<h1>Something went wrong!</h1>" };
 
-        var rh = ResourceHandle{ .static_html = "<h1>Something went wrong!</h1>" };
-        std.debug.print("relative_path: {s}\n", .{ relative_path });
-        std.debug.print("absolute_path: {s}\n", .{ absolute_path });
-
-        var resource_size : ?usize = null;
+        self.resource_size : ?usize = null;
         var file = try std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only});
         const metadata = try file.metadata();
 
@@ -186,50 +265,54 @@ const Resource = struct {
                 std.debug.print("content_type: {s}\n", .{content_type});
 
                 if(std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only})) |f| {
-                    std.debug.print("file resource: {s}\n", .{absolute_path});
-                    resource_size = metadata.size();
-                    std.debug.print("content-length: {?}\n", .{resource_size});
-                    rh = ResourceHandle { .file = f };
+                    std.debug.print("file resource: {s}\n", .{self.location.file_system.absolute_path.path});
+                    self.resource_size = metadata.size();
+                    std.debug.print("content-length: {?}\n", .{self.resource_size});
+                    self.handle = ResourceHandle { .file = f };
                 } else |err| {
-                    std.debug.print("File not found ({s}): {}!\n", .{ absolute_path, err });
+                    std.debug.print("File not found ({s}): {}!\n", .{ self.location.file_system.absolute_path.path, err });
                     return error.AccessDenied;
                 }
             },
             .directory => {
-                alloc.free(absolute_path);
                 file.close();
-                absolute_path = try std.fs.path.join(alloc, &[_][]const u8 {base_path, relative_path, "index.html"});
-                if(std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only})) |index_file| {
-                    rh = ResourceHandle { .file = index_file };
-                    content_type = "text/html";
-
+                self.location.file_system.from_parts([_][]const u8{
+                    self.location.file_system.base_path.path,
+                    self.location.file_system.relative_path.path,
+                    "index.html"
+                });
+                if(std.fs.openFileAbsolute(self.location.file_system.absolute_path, .{.mode = .read_only})) |index_file| {
+                    self.handle = ResourceHandle { .file = index_file };
+                    self.content_type = "text/html";
                 } else |err| {
                     std.debug.print("Couldn't find index file, reverting a directory listing: {}!\n", .{ err });
-                    alloc.free(absolute_path);
-                    absolute_path = try std.fs.path.join(alloc, &[_][]const u8{base_path, relative_path});
-                    var dir = try std.fs.openIterableDirAbsolute(absolute_path, .{.access_sub_paths = false});
-                    content_type = "text/html";
-                    rh = ResourceHandle{.directory = dir};
+                    self.location.file_system.from_relative_path(base_path, relative_path);
+                    var dir = try std.fs.openIterableDirAbsolute(
+                        self.location.file_system.absolute_path,
+                        .{.access_sub_paths = false}
+                    );
+                    self.content_type = "text/html";
+                    self.handle = ResourceHandle{.directory = dir};
                 }
             },
             else => {
                 std.debug.print("Not a traditional file or directory: {s}\n", .{ absolute_path });
-                content_type = "text/html";
-                rh = ResourceHandle{ .static_html = "<h1> ERROR: Restricted resource: 'Not a traditional file or directory'" };
+                self.content_type = "text/html";
+                self.handle = ResourceHandle{ .static_html = "<h1> ERROR: Restricted resource: 'Not a traditional file or directory'" };
             }
         }
 
         std.debug.print("Located: {s}\n", .{absolute_path});
-        return Self {
-            .base_path = base_path,
-            .relative_path = relative_path,
-            .absolute_path = absolute_path,
-            .path_buffer = path_buffer,
-            .alloc = alloc,
-            .content_type = content_type,
-            .resource_size = resource_size,
-            .handle = rh,
-        };
+
+        self.base_path = base_path;
+        self.relative_path = relative_path,
+        self.relative_path = relative_path,
+        self.absolute_path = absolute_path,
+        self.path_buffer = path_buffer,
+        self.alloc = alloc,
+        self.content_type = content_type,
+        self.resource_size = resource_size,
+        self.handle = rh,
     }
 
     pub fn send(self: *const Self, writer: std.http.Server.Response.Writer) FetchError!void {
