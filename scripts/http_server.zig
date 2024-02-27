@@ -71,8 +71,8 @@ pub fn list_dir(rsrc: *const Resource) FetchError!Hyperlinks {
         return error.NotDir;
     }
 
-    const relative_path = rsrc.relative_path;
-    const dir_path = rsrc.absolute_path;
+    const relative_path = rsrc.location.file_system.relative_path.path;
+    const dir_path = rsrc.location.file_system.absolute_path.path;
 
     std.debug.print("dir_path: {s}\n", .{dir_path});
     var dir = rsrc.handle.directory;
@@ -82,7 +82,7 @@ pub fn list_dir(rsrc: *const Resource) FetchError!Hyperlinks {
 
 pub fn html_list_dir(writer: std.http.Server.Response.Writer, rsrc: *const Resource) FetchError!void {
 
-    std.debug.print("Listing a directory: {s}", .{rsrc.relative_path});
+    std.debug.print("Listing a directory: {s}", .{rsrc.location.file_system.relative_path.path});
 
     // const base_path = rsrc.base_path;
     // const relative_path = rsrc.relative_path;
@@ -123,27 +123,27 @@ const FileSystemPath = struct {
 
     fn empty() Self {
         return Self {
-            path: "",
-            path_buffer: undefined,
-        }
+            .path = "",
+            .path_buffer = undefined,
+        };
     }
 
     fn from(self: *Self, part: []const u8) !void {
-        @memset(path_buffer, 0);
-        var fb = std.heap.FixedBufferAllocator.init(&path_buffer);
+        @memset(self.path_buffer[0..], 0);
+        var fb = std.heap.FixedBufferAllocator.init(&self.path_buffer);
         var pa = fb.allocator();
 
-        self.path = try std.fs.path.join(pa, [_][]const u8{part});
+        self.path = try std.fs.path.join(pa, &[_][]const u8{part});
     }
 
-    fn from_parts(self: *Self, comps: [][]const u8) !void {
-        @memset(path_buffer, 0);
-        var fb = std.heap.FixedBufferAllocator.init(&path_buffer);
+    fn from_parts(self: *Self, comps: []const []const u8) !void {
+        @memset(self.path_buffer[0..], 0);
+        var fb = std.heap.FixedBufferAllocator.init(&self.path_buffer);
         var pa = fb.allocator();
 
         self.path = try std.fs.path.join(pa, comps);
     }
-}
+};
 
 const ResourceFileSystemLocation = struct {
     const Self = @This();
@@ -153,36 +153,35 @@ const ResourceFileSystemLocation = struct {
 
     fn empty() Self {
         return Self {
-            base_path = FileSystemPath.empty(),
-            relative_path = FileSystemPath.empty(),
-            absolute_path = FileSystemPath.empty(),
-            resource_size = null
+            .base_path = FileSystemPath.empty(),
+            .relative_path = FileSystemPath.empty(),
+            .absolute_path = FileSystemPath.empty(),
         };
     }
 
-    fn set_base_path(self: *Self, base_path: []const u8) {
-        self.base_path.from(base_path);
+    fn set_base_path(self: *Self, base_path: []const u8) !void {
+        try self.base_path.from(base_path);
     }
 
-    fn from_relative_path(self: *self, relative_path: []const u8) {
-        self.relative_path.from(relative_path);
-        self.absolute_path.from_parts(&[_][]const u8{self.base_path.path, relative_path});
+    fn from_relative_path(self: *Self, relative_path: []const u8) !void {
+        try self.relative_path.from(relative_path);
+        try self.absolute_path.from_parts(&[_][]const u8{self.base_path.path, relative_path});
     }
 
-    fn append_part(self: *Self, part: []const u8) {
+    fn append_part(self: *Self, part: []const u8) !void {
 
         var scratch: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        @memset(scratch, 0);
+        @memset(scratch[0..], 0);
 
         var fb = std.heap.FixedBufferAllocator.init(&scratch);
         const pa = fb.allocator();
 
-        var tmp = std.path.join(pa, &{self.relative_path.path, part});
-        relative_path.from(tmp);
+        var tmp = try std.fs.path.join(pa, &[_][]const u8{self.relative_path.path, part});
+        try self.relative_path.from(tmp);
         pa.free(tmp);
 
-        tmp = std.path.join(pa, &{self.base_path.path, self.relative_path.path});
-        absolute_path.from(tmp);
+        tmp = try std.fs.path.join(pa, &[_][]const u8{self.base_path.path, self.relative_path.path});
+        try self.absolute_path.from(tmp);
         pa.free(tmp);
     }
 };
@@ -190,81 +189,89 @@ const ResourceFileSystemLocation = struct {
 const ResourceLocationType = enum {
     file_system,
     none,
-}
+};
 
 const ResourceLocation = union(ResourceLocationType) {
-    file_system(ResourceFileSystemLocation),
-    none(),
-}
+    file_system: ResourceFileSystemLocation,
+    none: void,
+};
 
 const Resource = struct {
     const Self = @This();
 
     content_type: []const u8,
-    location: ResourceLocation;
+    location: ResourceLocation,
     handle: ResourceHandle,
-    alloc: std.mem.Allocator,
     resource_size: ?usize,
 
-    fn empty(alloc: std.mem.Allocator) Self {
+    fn empty() Self {
         return Self {
             .location = .none,
+            .content_type = "text/plain",
             .handle = .{.static_html = "<h1> Empty resource, something went wrong! </h1>"},
-            .alloc = alloc,
+            .resource_size = null,
         };
     }
 
-    fn locate(self: *Self, base_path: []const u8, relative_path: []const u8) !void {
+    fn locate(self: *Self, base_path: []const u8, relative_path: []const u8) !*Self {
 
-        self.location.file_system.set_base_path(base_path);
-        self.location.file_system.from_relative_path(relative_path);
-        std.debug.print("base_path: {s}\n", .{self.location.file_syste.base_path});
+        // NOTE: The code still assumes all resources are located on the file system,
+        // it is possible that in the feature we may want to implement support for
+        // different types of resource locations. This may be things such as HTTP
+        // proxies, access to resources over other protocols such as FTP, execution
+        // of external tools/programs etc.
+
+        self.location = .{.file_system = ResourceFileSystemLocation.empty()};
+
+        try self.location.file_system.set_base_path(base_path);
+        try self.location.file_system.from_relative_path(relative_path);
+        std.debug.print("base_path: {s}\n", .{self.location.file_system.base_path.path});
         self.content_type = "application/octet-stream";
         self.handle = ResourceHandle{ .static_html = "<h1>Something went wrong!</h1>" };
 
-        self.resource_size : ?usize = null;
-        var file = try std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only});
+        self.resource_size = null;
+        var file = try std.fs.openFileAbsolute(self.location.file_system.absolute_path.path, .{.mode = .read_only});
         const metadata = try file.metadata();
 
         switch (metadata.kind()) {
             .file => {
                 if(std.mem.endsWith(u8, relative_path, ".html")) {
-                    content_type = "text/html";
+                    self.content_type = "text/html";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".js")) {
-                    content_type = "text/javascript";
+                    self.content_type = "text/javascript";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".wasm")) {
-                    content_type = "application/wasm";
+                    self.content_type = "application/wasm";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".css")) {
-                    content_type = "text/css";
+                    self.content_type = "text/css";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".png")) {
-                    content_type = "image/png";
+                    self.content_type = "image/png";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".gif")) {
-                    content_type = "image/gif";
+                    self.content_type = "image/gif";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".svg")) {
-                    content_type = "image/svg+xml";
+                    self.content_type = "image/svg+xml";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".jpg") or std.mem.endsWith(u8, relative_path, ".jpeg") ) {
-                    content_type = "image/jpeg";
+                    self.content_type = "image/jpeg";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".mpeg")) {
-                    content_type = "video/mpeg";
+                    self.content_type = "video/mpeg";
                 }
-                else if(std.mem.endsWith(u8, relative_path, ".mp4")) {
-                    content_type = "video/mp4";
+                else if(std.mem.endsWith(u8, self.location.file_system.relative_path.path, ".mp4")) {
+                    self.content_type = "video/mp4";
                 }
                 else if(std.mem.endsWith(u8, relative_path, ".webm")) {
-                    content_type = "video/webm";
+                    self.content_type = "video/webm";
                 }
 
-                std.debug.print("content_type: {s}\n", .{content_type});
+                std.debug.print("content_type: {s}\n", .{self.content_type});
 
-                if(std.fs.openFileAbsolute(absolute_path, .{.mode = .read_only})) |f| {
+                if(std.fs.openFileAbsolute(self.location.file_system.absolute_path.path, .{.mode = .read_only})) |f| {
                     std.debug.print("file resource: {s}\n", .{self.location.file_system.absolute_path.path});
                     self.resource_size = metadata.size();
                     std.debug.print("content-length: {?}\n", .{self.resource_size});
@@ -276,19 +283,15 @@ const Resource = struct {
             },
             .directory => {
                 file.close();
-                self.location.file_system.from_parts([_][]const u8{
-                    self.location.file_system.base_path.path,
-                    self.location.file_system.relative_path.path,
-                    "index.html"
-                });
-                if(std.fs.openFileAbsolute(self.location.file_system.absolute_path, .{.mode = .read_only})) |index_file| {
+                try self.location.file_system.append_part("index.html");
+                if(std.fs.openFileAbsolute(self.location.file_system.absolute_path.path, .{.mode = .read_only})) |index_file| {
                     self.handle = ResourceHandle { .file = index_file };
                     self.content_type = "text/html";
                 } else |err| {
                     std.debug.print("Couldn't find index file, reverting a directory listing: {}!\n", .{ err });
-                    self.location.file_system.from_relative_path(base_path, relative_path);
+                    try self.location.file_system.from_relative_path(relative_path);
                     var dir = try std.fs.openIterableDirAbsolute(
-                        self.location.file_system.absolute_path,
+                        self.location.file_system.absolute_path.path,
                         .{.access_sub_paths = false}
                     );
                     self.content_type = "text/html";
@@ -296,23 +299,15 @@ const Resource = struct {
                 }
             },
             else => {
-                std.debug.print("Not a traditional file or directory: {s}\n", .{ absolute_path });
+                std.debug.print("Not a traditional file or directory: {s}\n", .{ self.location.file_system.absolute_path.path });
                 self.content_type = "text/html";
                 self.handle = ResourceHandle{ .static_html = "<h1> ERROR: Restricted resource: 'Not a traditional file or directory'" };
             }
         }
 
-        std.debug.print("Located: {s}\n", .{absolute_path});
+        std.debug.print("Located: {s}\n", .{self.location.file_system.absolute_path.path});
 
-        self.base_path = base_path;
-        self.relative_path = relative_path,
-        self.relative_path = relative_path,
-        self.absolute_path = absolute_path,
-        self.path_buffer = path_buffer,
-        self.alloc = alloc,
-        self.content_type = content_type,
-        self.resource_size = resource_size,
-        self.handle = rh,
+        return self;
     }
 
     pub fn send(self: *const Self, writer: std.http.Server.Response.Writer) FetchError!void {
@@ -360,9 +355,8 @@ const Resource = struct {
         }
     }
 
-    fn deinit(self: *Self) !void {
+    fn deinit(_: *Self) !void {
         // Just in case we start using different allocator.
-        self.alloc.free(self.path_buffer);
     }
 };
 
@@ -500,6 +494,7 @@ pub fn main() !void {
     try server.listen(bind_addr);
 
     var base_path = config.root_dir;//std.mem.span(@as([*c]const u8, @ptrCast(config.root_dir)));
+    var resource = Resource.empty();
 
     while (true) {
 
@@ -561,7 +556,7 @@ pub fn main() !void {
 
             // FIXME: Make sure file system resources are locked while they
             // are being retrived to avoid race conditions.
-            if(Resource.locate(base_path, request.target)) |rsrc| {
+            if(resource.locate(base_path, request.target)) |rsrc| {
 
                 res.status = .ok;
                 // FIXME: transfer encoding should corespond to prefer method used by client.
